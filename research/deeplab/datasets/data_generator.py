@@ -96,10 +96,21 @@ _ADE20K_INFORMATION = DatasetDescriptor(
     ignore_label=0,
 )
 
+_SKIN_INFORMATION = DatasetDescriptor(
+    splits_to_sizes={
+        'train': 2594,
+        'test': 1000,
+    },
+    num_classes=3, # 7 for complete classes, 3 for only one class
+    ignore_label=255,
+)
+
+
 _DATASETS_INFORMATION = {
     'cityscapes': _CITYSCAPES_INFORMATION,
     'pascal_voc_seg': _PASCAL_VOC_SEG_INFORMATION,
     'ade20k': _ADE20K_INFORMATION,
+    'skin': _SKIN_INFORMATION,
 }
 
 # Default file pattern of TFRecord of TensorFlow Example.
@@ -318,21 +329,40 @@ class Dataset(object):
     """
 
     files = self._get_all_files()
+    files = sorted(files)
+    
+    
+    dataset_benign = (
+        tf.data.TFRecordDataset(files[0], num_parallel_reads=self.num_readers)
+        .map(self._parse_function, num_parallel_calls=self.num_readers)
+        .map(self._preprocess_image, num_parallel_calls=self.num_readers))
 
-    dataset = (
-        tf.data.TFRecordDataset(files, num_parallel_reads=self.num_readers)
+    dataset_malignant = (
+        tf.data.TFRecordDataset(files[1], num_parallel_reads=self.num_readers)
         .map(self._parse_function, num_parallel_calls=self.num_readers)
         .map(self._preprocess_image, num_parallel_calls=self.num_readers))
 
     if self.should_shuffle:
-      dataset = dataset.shuffle(buffer_size=100)
+      dataset_benign = dataset_benign.shuffle(buffer_size=100)
+      dataset_malignant = dataset_malignant.shuffle(buffer_size=100)
+
+    datasets = [dataset_benign, dataset_malignant]
 
     if self.should_repeat:
-      dataset = dataset.repeat()  # Repeat forever for training.
+      dataset_benign = dataset_benign.repeat()  # Repeat forever for training.
+      dataset_malignant = dataset_malignant.repeat()
     else:
-      dataset = dataset.repeat(1)
+      dataset_benign = dataset_benign.repeat(1)
+      dataset_malignant = dataset_malignant.repeat(1)
 
+    datasets = [dataset_benign, dataset_malignant]
+    choice_dataset = tf.data.Dataset.range(2).repeat(1)
+    
+    dataset = tf.data.experimental.choose_from_datasets(datasets, choice_dataset)
+    print(dataset)
     dataset = dataset.batch(self.batch_size).prefetch(self.batch_size)
+    print(dataset)
+    #dataset = dataset.prefetch(self.batch_size)
     return dataset.make_one_shot_iterator()
 
   def _get_all_files(self):
